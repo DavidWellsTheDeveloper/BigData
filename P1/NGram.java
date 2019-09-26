@@ -86,8 +86,10 @@ public class  NGram {
                 String[] textOfArticle = article[2].split(" ");
                 // Go through each word in the article
                 for(String word: textOfArticle) {
-                    Text compositeKey = new Text(documentID.toString() + '\t' + sanatizeToken(word).toString());
-                    context.write(compositeKey, one);
+                    if (word != null) {
+                        Text compositeKey = new Text(documentID.toString() + "<====>" + sanatizeToken(word).toString());
+                        context.write(compositeKey, one);
+                    }
                 }
             }
         }
@@ -99,27 +101,42 @@ public class  NGram {
     }
 
 	
-    public static class ReduceGram2 extends Reducer<Text,IntWritable,Text,IntWritable> {
+    public static class ReduceGram2 extends Reducer<Text,IntWritable,Text,NullWritable> {
         private IntWritable result = new IntWritable();
-        private TreeMap<Text, Integer> repToRecordMap = new TreeMap<Text, Integer>();
+        private TreeMap<String, NullWritable> repToRecordMap = new TreeMap<String, NullWritable>();
         public void reduce(Text key,Iterable<IntWritable>values, Context context) throws IOException, InterruptedException 
         {
             int sum = 0;
 			for (IntWritable val :values)
 			{
-				sum += val.get();
+				sum += 1;
 			}
 			result.set(sum);
 			
-			repToRecordMap.put(key, sum);
+			String[] keyarr = key.toString().split("<====>");
+			if (keyarr.length == 2) {
+                String strNum = padNumbers(sum);
+                repToRecordMap.put(keyarr[0] + "<====>" + Integer.toString(sum) + "<====>" + keyarr[1], NullWritable.get());
+			}
+			
             if (repToRecordMap.size() > 500) {
                 repToRecordMap.remove(repToRecordMap.firstKey());
             }
         }
+        private String padNumbers(Integer sum) {
+            String strNum = Integer.toString(sum);
+            while (strNum.length() < 2) {
+                strNum = "0" + strNum;
+            }
+            return strNum;
+        }
         
         protected void cleanup(Context context) throws IOException, InterruptedException {
-            for (Text t : repToRecordMap.keySet()) {
-                context.write(t,result);
+            while (repToRecordMap.size() >= 1) {
+            String t = repToRecordMap.pollLastEntry().getKey();
+            String[] record = t.split("<====>");
+            Text text = new Text(record[0] + "\t" + record[2] + "\t" + record[1]);
+                context.write(text, NullWritable.get());
             } 
         }
     }
