@@ -86,6 +86,7 @@ public class  NGram {
                 String[] textOfArticle = article[2].split(" ");
                 // Go through each word in the article
                 for(String word: textOfArticle) {
+                    word = sanatizeToken(word).toString();
                     if (word != null) {
                         Text compositeKey = new Text(documentID.toString() + "<====>" + sanatizeToken(word).toString());
                         context.write(compositeKey, one);
@@ -109,19 +110,19 @@ public class  NGram {
             int sum = 0;
 			for (IntWritable val :values)
 			{
-				sum += 1;
+				sum += val.get();
 			}
 			result.set(sum);
 			
 			String[] keyarr = key.toString().split("<====>");
 			if (keyarr.length == 2) {
                 String strNum = padNumbers(sum);
-                repToRecordMap.put(keyarr[0] + "<====>" + Integer.toString(sum) + "<====>" + keyarr[1], NullWritable.get());
+                repToRecordMap.put(keyarr[0] + "<====>" + strNum + "<====>" + keyarr[1], NullWritable.get());
 			}
 			
-            if (repToRecordMap.size() > 500) {
-                repToRecordMap.remove(repToRecordMap.firstKey());
-            }
+//             if (repToRecordMap.size() > 500) {
+//                 repToRecordMap.remove(repToRecordMap.firstKey());
+//             }
         }
         private String padNumbers(Integer sum) {
             String strNum = Integer.toString(sum);
@@ -142,19 +143,82 @@ public class  NGram {
     }
     
     
+    public static class MapGram3 extends Mapper<Object, Text, Text, IntWritable> {
+        private final static IntWritable one = new IntWritable(1);
+        private TreeMap<Text, Integer> repToRecordMap = new TreeMap<Text, Integer>();
+        public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+            StringTokenizer itr = new StringTokenizer(value.toString());
+            //  get article title and docID split by special delimiter.
+            while (itr.hasMoreTokens()) {
+                String[] article = itr.nextToken("\n\n").split("<====>");
+                String[] textOfArticle = article[2].split(" ");
+                // Go through each word in the article
+                 for(String word: textOfArticle) {
+                    word = sanatizeToken(word).toString();
+                    if (word != null) {
+                        Text w = new Text(word);
+                        context.write(w, one);
+                    }
+                }
+            }
+        }
+        private Text sanatizeToken(String word) {
+            String sanatizing = word.replaceAll("[^a-zA-Z0-9]", "");
+            sanatizing = sanatizing.toLowerCase();
+            return new Text(sanatizing);
+        }
+    }
+    
+    
+    public static class ReduceGram3 extends Reducer<Text,IntWritable,Text,NullWritable> {
+        private IntWritable result = new IntWritable();
+        private TreeMap<String, NullWritable> repToRecordMap = new TreeMap<String, NullWritable>();
+        public void reduce(Text key,Iterable<IntWritable>values, Context context) throws IOException, InterruptedException 
+        {
+            int sum = 0;
+			for (IntWritable val :values)
+			{
+				sum += val.get();
+			}
+			result.set(sum);
+            
+            String strNum = padNumbers(sum);
+            repToRecordMap.put(strNum + "<====>" + key, NullWritable.get());
+			
+            if (repToRecordMap.size() > 500) {
+                repToRecordMap.remove(repToRecordMap.firstKey());
+            }
+        }
+        private String padNumbers(Integer sum) {
+            String strNum = Integer.toString(sum);
+            while (strNum.length() < 5) {
+                strNum = "0" + strNum;
+            }
+            return strNum;
+        }
+        
+        protected void cleanup(Context context) throws IOException, InterruptedException {
+            while (repToRecordMap.size() >= 1) {
+                Map.Entry t = repToRecordMap.pollFirstEntry();
+                String[] record = t.getKey().toString().split("<====>");
+                Text text = new Text(record[1] + "\t" + record[0]);
+                context.write(text, NullWritable.get());
+            } 
+        }
+    }
+    
+    
     public static void main(String[] args) throws Exception {
         Configuration conf = new Configuration();
-        
 //         Create instance of a job
         Job job = Job.getInstance(conf, "N Gram");
         job.setJarByClass(NGram.class);
         
 //         use first arg as input and second as output files, third as a profile
-        FileInputFormat.addInputPath(job, new Path(args[0]));
-		FileOutputFormat.setOutputPath(job, new Path(args[1]));
         int profile = Integer.parseInt(args[2]);
         job.setOutputKeyClass(Text.class);
-        
+        FileInputFormat.addInputPath(job, new Path(args[0]));
+        FileOutputFormat.setOutputPath(job, new Path(args[1]));
         
         switch(profile) {
             case 1:
@@ -164,19 +228,21 @@ public class  NGram {
                 break;
             case 2:
                 job.setOutputValueClass(IntWritable.class);
-                job. setMapperClass(NGram.MapGram2.class);
+                job.setMapperClass(NGram.MapGram2.class);
                 job.setReducerClass(NGram.ReduceGram2.class);
                 break;
             case 3:
-            
+                job.setOutputValueClass(IntWritable.class);
+                job.setMapperClass(NGram.MapGram3.class);
+                job.setReducerClass(NGram.ReduceGram3.class);
                 break;
                 
         }
         
         
 //         Take inputs and run job
-        FileInputFormat.addInputPath(job, new Path(args[0]));
-        FileOutputFormat.setOutputPath(job, new Path(args[1]));
+	FileInputFormat.addInputPath(job, new Path(args[0]));
+	FileOutputFormat.setOutputPath(job, new Path(args[1]));
         System.exit(job.waitForCompletion(true) ? 0 : 1);
 
     }
